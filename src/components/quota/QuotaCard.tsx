@@ -56,6 +56,8 @@ export interface QuotaRenderHelpers {
   QuotaProgressBar: (props: QuotaProgressBarProps) => ReactElement;
 }
 
+export type AvailabilityTone = 'success' | 'error' | 'disabled' | 'pending' | 'idle';
+
 interface QuotaCardProps<TState extends QuotaStatusState> {
   item: AuthFileItem;
   quota?: TState;
@@ -66,6 +68,9 @@ interface QuotaCardProps<TState extends QuotaStatusState> {
   defaultType: string;
   canRefresh?: boolean;
   onRefresh?: () => void;
+  availabilityLabel?: string;
+  availabilityReason?: string | null;
+  availabilityTone?: AvailabilityTone;
   renderQuotaItems: (quota: TState, t: TFunction, helpers: QuotaRenderHelpers) => ReactNode;
 }
 
@@ -79,6 +84,9 @@ export function QuotaCard<TState extends QuotaStatusState>({
   defaultType,
   canRefresh = false,
   onRefresh,
+  availabilityLabel,
+  availabilityReason,
+  availabilityTone = 'idle',
   renderQuotaItems
 }: QuotaCardProps<TState>) {
   const { t } = useTranslation();
@@ -95,6 +103,13 @@ export function QuotaCard<TState extends QuotaStatusState>({
     quota?.error || t('common.unknown_error')
   );
   const idleMessageKey = onRefresh ? `${i18nPrefix}.idle` : (cardIdleMessageKey ?? `${i18nPrefix}.idle`);
+  const availabilityClassName = {
+    success: styles.statusBadgeSuccess,
+    error: styles.statusBadgeError,
+    disabled: styles.statusBadgeDisabled,
+    pending: styles.statusBadgePending,
+    idle: styles.statusBadgeIdle
+  }[availabilityTone];
 
   const getTypeLabel = (type: string): string => {
     const key = `auth_files.filter_${type}`;
@@ -119,6 +134,16 @@ export function QuotaCard<TState extends QuotaStatusState>({
         </span>
         <span className={styles.fileName}>{item.name}</span>
       </div>
+      {availabilityLabel ? (
+        <div className={styles.cardMeta}>
+          <span className={`${styles.statusBadgeInline} ${availabilityClassName}`}>
+            {availabilityLabel}
+          </span>
+          {availabilityReason ? (
+            <span className={styles.statusReason}>{availabilityReason}</span>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className={styles.quotaSection}>
         {quotaStatus === 'loading' ? (

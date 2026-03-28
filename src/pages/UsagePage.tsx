@@ -37,6 +37,8 @@ import {
   getModelNamesFromUsage,
   getApiStats,
   getModelStats,
+  buildApiKeyFilterOptions,
+  filterUsageByApiKey,
   filterUsageByTimeRange,
   type UsageTimeRange
 } from '@/utils/usage';
@@ -56,8 +58,10 @@ ChartJS.register(
 
 const CHART_LINES_STORAGE_KEY = 'cli-proxy-usage-chart-lines-v1';
 const TIME_RANGE_STORAGE_KEY = 'cli-proxy-usage-time-range-v1';
+const API_KEY_FILTER_STORAGE_KEY = 'cli-proxy-usage-api-key-filter-v1';
 const DEFAULT_CHART_LINES = ['all'];
 const DEFAULT_TIME_RANGE: UsageTimeRange = '24h';
+const DEFAULT_API_KEY_FILTER = 'all';
 const MAX_CHART_LINES = 9;
 const TIME_RANGE_OPTIONS: ReadonlyArray<{ value: UsageTimeRange; labelKey: string }> = [
   { value: 'all', labelKey: 'usage_stats.range_all' },
@@ -115,6 +119,18 @@ const loadTimeRange = (): UsageTimeRange => {
   }
 };
 
+const loadApiKeyFilterValue = (): string => {
+  try {
+    if (typeof localStorage === 'undefined') {
+      return DEFAULT_API_KEY_FILTER;
+    }
+    const raw = localStorage.getItem(API_KEY_FILTER_STORAGE_KEY);
+    return typeof raw === 'string' && raw.trim() ? raw : DEFAULT_API_KEY_FILTER;
+  } catch {
+    return DEFAULT_API_KEY_FILTER;
+  }
+};
+
 export function UsagePage() {
   const { t } = useTranslation();
   const isMobile = useMediaQuery('(max-width: 768px)');
@@ -144,6 +160,7 @@ export function UsagePage() {
   // Chart lines state
   const [chartLines, setChartLines] = useState<string[]>(loadChartLines);
   const [timeRange, setTimeRange] = useState<UsageTimeRange>(loadTimeRange);
+  const [apiKeyFilterValue, setApiKeyFilterValue] = useState<string>(loadApiKeyFilterValue);
 
   const timeRangeOptions = useMemo(
     () =>
@@ -154,9 +171,37 @@ export function UsagePage() {
     [t]
   );
 
+  const apiKeyFilterOptions = useMemo(() => {
+    const baseOptions = buildApiKeyFilterOptions(config?.apiKeys || []);
+    return baseOptions.map((option) => ({
+      ...option,
+      label:
+        option.type === 'all'
+          ? t('usage_stats.filter_all')
+          : option.type === 'unknown'
+            ? t('usage_stats.api_key_unknown')
+            : option.label
+    }));
+  }, [config?.apiKeys, t]);
+
+  const selectedApiKeyFilter = useMemo(
+    () =>
+      apiKeyFilterOptions.find((option) => option.value === apiKeyFilterValue) ??
+      apiKeyFilterOptions[0],
+    [apiKeyFilterOptions, apiKeyFilterValue]
+  );
+
+  const usageByApiKey = useMemo(
+    () =>
+      usage && selectedApiKeyFilter
+        ? filterUsageByApiKey(usage, selectedApiKeyFilter)
+        : usage,
+    [selectedApiKeyFilter, usage]
+  );
+
   const filteredUsage = useMemo(
-    () => (usage ? filterUsageByTimeRange(usage, timeRange) : null),
-    [usage, timeRange]
+    () => (usageByApiKey ? filterUsageByTimeRange(usageByApiKey, timeRange) : null),
+    [timeRange, usageByApiKey]
   );
   const hourWindowHours =
     timeRange === 'all' ? undefined : HOUR_WINDOW_BY_TIME_RANGE[timeRange];
@@ -187,6 +232,17 @@ export function UsagePage() {
     }
   }, [timeRange]);
 
+  useEffect(() => {
+    try {
+      if (typeof localStorage === 'undefined') {
+        return;
+      }
+      localStorage.setItem(API_KEY_FILTER_STORAGE_KEY, selectedApiKeyFilter?.value || DEFAULT_API_KEY_FILTER);
+    } catch {
+      // Ignore storage errors.
+    }
+  }, [selectedApiKeyFilter]);
+
   const nowMs = lastRefreshedAt?.getTime() ?? 0;
 
   // Sparklines hook
@@ -211,7 +267,7 @@ export function UsagePage() {
   } = useChartData({ usage: filteredUsage, chartLines, isDark, isMobile, hourWindowHours });
 
   // Derived data
-  const modelNames = useMemo(() => getModelNamesFromUsage(usage), [usage]);
+  const modelNames = useMemo(() => getModelNamesFromUsage(usageByApiKey), [usageByApiKey]);
   const apiStats = useMemo(
     () => getApiStats(filteredUsage, modelPrices),
     [filteredUsage, modelPrices]
@@ -244,6 +300,17 @@ export function UsagePage() {
               onChange={(value) => setTimeRange(value as UsageTimeRange)}
               className={styles.timeRangeSelectControl}
               ariaLabel={t('usage_stats.range_filter')}
+              fullWidth={false}
+            />
+          </div>
+          <div className={styles.timeRangeGroup}>
+            <span className={styles.timeRangeLabel}>{t('usage_stats.api_key_filter')}</span>
+            <Select
+              value={selectedApiKeyFilter?.value || DEFAULT_API_KEY_FILTER}
+              options={apiKeyFilterOptions}
+              onChange={setApiKeyFilterValue}
+              className={styles.timeRangeSelectControl}
+              ariaLabel={t('usage_stats.api_key_filter')}
               fullWidth={false}
             />
           </div>
@@ -314,7 +381,7 @@ export function UsagePage() {
       />
 
       {/* Service Health */}
-      <ServiceHealthCard usage={usage} loading={loading} />
+      <ServiceHealthCard usage={usageByApiKey} loading={loading} />
 
       {/* Charts Grid */}
       <div className={styles.chartsGrid}>

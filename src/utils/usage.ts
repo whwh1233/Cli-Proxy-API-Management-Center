@@ -124,23 +124,19 @@ const toUsageSummaryFields = (summary: UsageSummary) => ({
   total_tokens: summary.totalTokens
 });
 
-export function filterUsageByTimeRange<T>(usageData: T, range: UsageTimeRange, nowMs: number = Date.now()): T {
-  if (range === 'all') {
-    return usageData;
-  }
-
+const filterUsageByDetailPredicate = <T>(
+  usageData: T,
+  predicate: (
+    detailRecord: Record<string, unknown>,
+    context: { apiName: string; modelName: string }
+  ) => boolean
+): T => {
   const usageRecord = isRecord(usageData) ? usageData : null;
   const apis = getApisRecord(usageData);
   if (!usageRecord || !apis) {
     return usageData;
   }
 
-  const rangeMs = USAGE_TIME_RANGE_MS[range];
-  if (!Number.isFinite(rangeMs) || rangeMs <= 0) {
-    return usageData;
-  }
-
-  const windowStart = nowMs - rangeMs;
   const filteredApis: Record<string, unknown> = {};
   const totalSummary = createUsageSummary();
 
@@ -169,11 +165,13 @@ export function filterUsageByTimeRange<T>(usageData: T, range: UsageTimeRange, n
 
       detailsRaw.forEach((detail) => {
         const detailRecord = isRecord(detail) ? detail : null;
-        if (!detailRecord || typeof detailRecord.timestamp !== 'string') {
-          return;
-        }
-        const timestamp = Date.parse(detailRecord.timestamp);
-        if (Number.isNaN(timestamp) || timestamp < windowStart || timestamp > nowMs) {
+        if (
+          !detailRecord ||
+          !predicate(detailRecord, {
+            apiName,
+            modelName
+          })
+        ) {
           return;
         }
 
@@ -225,6 +223,26 @@ export function filterUsageByTimeRange<T>(usageData: T, range: UsageTimeRange, n
     ...toUsageSummaryFields(totalSummary),
     apis: filteredApis
   } as T;
+};
+
+export function filterUsageByTimeRange<T>(usageData: T, range: UsageTimeRange, nowMs: number = Date.now()): T {
+  if (range === 'all') {
+    return usageData;
+  }
+
+  const rangeMs = USAGE_TIME_RANGE_MS[range];
+  if (!Number.isFinite(rangeMs) || rangeMs <= 0) {
+    return usageData;
+  }
+
+  const windowStart = nowMs - rangeMs;
+  return filterUsageByDetailPredicate(usageData, (detailRecord) => {
+    if (typeof detailRecord.timestamp !== 'string') {
+      return false;
+    }
+    const timestamp = Date.parse(detailRecord.timestamp);
+    return !Number.isNaN(timestamp) && timestamp >= windowStart && timestamp <= nowMs;
+  });
 }
 
 export const normalizeAuthIndex = (value: unknown) => {
@@ -354,6 +372,96 @@ export function buildCandidateUsageSourceIds(input: { apiKey?: string; prefix?: 
   }
 
   return Array.from(new Set(result));
+}
+
+export type UsageSourceFilterOptionType = 'all' | 'key' | 'unknown';
+
+export interface UsageSourceFilterOption {
+  value: string;
+  label: string;
+  type: UsageSourceFilterOptionType;
+  sourceIds: string[];
+  knownSourceIds: string[];
+}
+
+export function maskApiKeyForDisplay(key: string): string {
+  const trimmed = key.trim();
+  if (!trimmed) {
+    return '';
+  }
+  if (trimmed.length <= 8) {
+    return trimmed;
+  }
+
+  const visibleStart = trimmed.length > 12 ? 4 : 3;
+  const visibleEnd = trimmed.length > 12 ? 4 : 3;
+  return `${trimmed.slice(0, visibleStart)}***${trimmed.slice(-visibleEnd)}`;
+}
+
+export function buildApiKeyFilterOptions(apiKeys: string[]): UsageSourceFilterOption[] {
+  const keyOptions = apiKeys
+    .map((apiKey) => apiKey.trim())
+    .filter(Boolean)
+    .map((apiKey, index) => ({
+      value: `api-key:${index}`,
+      label: apiKey,
+      type: 'key' as const,
+      sourceIds: buildCandidateUsageSourceIds({ apiKey }),
+      knownSourceIds: []
+    }));
+
+  const knownSourceIds = Array.from(new Set(keyOptions.flatMap((option) => option.sourceIds)));
+
+  return [
+    {
+      value: 'all',
+      label: '全部',
+      type: 'all',
+      sourceIds: [],
+      knownSourceIds
+    },
+    ...keyOptions.map((option) => ({
+      ...option,
+      knownSourceIds
+    })),
+    {
+      value: 'unknown',
+      label: '未知来源',
+      type: 'unknown',
+      sourceIds: [],
+      knownSourceIds
+    }
+  ];
+}
+
+export function filterUsageByApiKey<T>(usageData: T, filter: UsageSourceFilterOption): T {
+  if (filter.type === 'all') {
+    return usageData;
+  }
+
+  const selectedSourceIds = new Set(filter.sourceIds);
+  const knownSourceIds = new Set(filter.knownSourceIds);
+
+  return filterUsageByDetailPredicate(usageData, (detailRecord, context) => {
+    const normalizedSource = normalizeUsageSourceId(detailRecord.source);
+    const normalizedApiName = normalizeUsageSourceId(context.apiName);
+    const matchesSelected =
+      (normalizedSource && selectedSourceIds.has(normalizedSource)) ||
+      (normalizedApiName && selectedSourceIds.has(normalizedApiName));
+    const isKnown =
+      (normalizedSource && knownSourceIds.has(normalizedSource)) ||
+      (normalizedApiName && knownSourceIds.has(normalizedApiName));
+
+    if (filter.type === 'key') {
+      return Boolean(matchesSelected);
+    }
+
+    if (!normalizedSource && !normalizedApiName) {
+      return true;
+    }
+
+    return !isKnown;
+  });
 }
 
 /**
@@ -908,7 +1016,7 @@ export function getApiStats(usageData: unknown, modelPrices: Record<string, Mode
       : derivedFailureCount;
 
     result.push({
-      endpoint: maskUsageSensitiveValue(endpoint) || endpoint,
+      endpoint,
       totalRequests: Number(apiData.total_requests) || 0,
       successCount,
       failureCount,

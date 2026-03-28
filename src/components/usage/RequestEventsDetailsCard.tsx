@@ -442,7 +442,10 @@ export function RequestEventsDetailsCard({
                     </td>
                     <td className={styles.modelCell}>{row.model}</td>
                     <td className={styles.requestEventsSourceCell} title={row.source}>
-                      <span>{row.source}</span>
+                      <span className={styles.requestEventsSourcePrimary}>{row.source}</span>
+                      {row.sourceRaw !== row.source && (
+                        <span className={styles.requestEventsSourceRaw}>{row.sourceRaw}</span>
+                      )}
                       {row.sourceType && (
                         <span className={styles.credentialType}>{row.sourceType}</span>
                       )}

@@ -960,6 +960,8 @@
     "range_7h": "Last 7 Hours",
     "range_24h": "Last 24 Hours",
     "range_7d": "Last 7 Days",
+    "api_key_filter": "API Key",
+    "api_key_unknown": "Unknown Source",
     "filter_all": "All",
     "clear_filters": "Clear Filters",
     "refresh": "Refresh",

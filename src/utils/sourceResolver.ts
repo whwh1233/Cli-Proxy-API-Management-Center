@@ -35,7 +35,7 @@ export function buildSourceInfoMap(input: SourceInfoMapInput): Map<string, Sourc
 
   providers.forEach(({ items, type, label }) => {
     items.forEach((item, index) => {
-      const displayName = item.prefix?.trim() || `${label} #${index + 1}`;
+      const displayName = item.apiKey?.trim() || item.prefix?.trim() || `${label} #${index + 1}`;
       registerCandidates(
         displayName,
         type,

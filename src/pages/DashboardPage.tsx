@@ -3,12 +3,11 @@ import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   IconKey,
-  IconBot,
   IconFileText,
   IconSatellite
 } from '@/components/ui/icons';
 import { useAuthStore, useConfigStore, useModelsStore } from '@/stores';
-import { apiKeysApi, providersApi, authFilesApi } from '@/services/api';
+import { apiKeysApi, authFilesApi } from '@/services/api';
 import styles from './DashboardPage.module.scss';
 
 interface QuickStat {
@@ -18,13 +17,6 @@ interface QuickStat {
   path: string;
   loading?: boolean;
   sublabel?: string;
-}
-
-interface ProviderStats {
-  gemini: number | null;
-  codex: number | null;
-  claude: number | null;
-  openai: number | null;
 }
 
 type TimeOfDay = 'morning' | 'afternoon' | 'evening' | 'night';
@@ -55,13 +47,6 @@ export function DashboardPage() {
   }>({
     apiKeys: null,
     authFiles: null
-  });
-
-  const [providerStats, setProviderStats] = useState<ProviderStats>({
-    gemini: null,
-    codex: null,
-    claude: null,
-    openai: null
   });
 
   const [loading, setLoading] = useState(true);
@@ -151,25 +136,14 @@ export function DashboardPage() {
     const fetchStats = async () => {
       setLoading(true);
       try {
-        const [keysRes, filesRes, geminiRes, codexRes, claudeRes, openaiRes] = await Promise.allSettled([
+        const [keysRes, filesRes] = await Promise.allSettled([
           apiKeysApi.list(),
-          authFilesApi.list(),
-          providersApi.getGeminiKeys(),
-          providersApi.getCodexConfigs(),
-          providersApi.getClaudeConfigs(),
-          providersApi.getOpenAIProviders()
+          authFilesApi.list()
         ]);
 
         setStats({
           apiKeys: keysRes.status === 'fulfilled' ? keysRes.value.length : null,
           authFiles: filesRes.status === 'fulfilled' ? filesRes.value.files.length : null
-        });
-
-        setProviderStats({
-          gemini: geminiRes.status === 'fulfilled' ? geminiRes.value.length : null,
-          codex: codexRes.status === 'fulfilled' ? codexRes.value.length : null,
-          claude: claudeRes.status === 'fulfilled' ? claudeRes.value.length : null,
-          openai: openaiRes.status === 'fulfilled' ? openaiRes.value.length : null
         });
       } finally {
         setLoading(false);
@@ -184,24 +158,6 @@ export function DashboardPage() {
     }
   }, [connectionStatus, fetchModels]);
 
-  // Calculate total provider keys only when all provider stats are available.
-  const providerStatsReady =
-    providerStats.gemini !== null &&
-    providerStats.codex !== null &&
-    providerStats.claude !== null &&
-    providerStats.openai !== null;
-  const hasProviderStats =
-    providerStats.gemini !== null ||
-    providerStats.codex !== null ||
-    providerStats.claude !== null ||
-    providerStats.openai !== null;
-  const totalProviderKeys = providerStatsReady
-    ? (providerStats.gemini ?? 0) +
-      (providerStats.codex ?? 0) +
-      (providerStats.claude ?? 0) +
-      (providerStats.openai ?? 0)
-    : 0;
-
   const quickStats: QuickStat[] = [
     {
       label: t('dashboard.management_keys'),
@@ -210,21 +166,6 @@ export function DashboardPage() {
       path: '/config',
       loading: loading && stats.apiKeys === null,
       sublabel: t('nav.config_management')
-    },
-    {
-      label: t('nav.ai_providers'),
-      value: loading ? '-' : providerStatsReady ? totalProviderKeys : '-',
-      icon: <IconBot size={24} />,
-      path: '/ai-providers',
-      loading: loading,
-      sublabel: hasProviderStats
-        ? t('dashboard.provider_keys_detail', {
-            gemini: providerStats.gemini ?? '-',
-            codex: providerStats.codex ?? '-',
-            claude: providerStats.claude ?? '-',
-            openai: providerStats.openai ?? '-'
-          })
-        : undefined
     },
     {
       label: t('nav.auth_files'),

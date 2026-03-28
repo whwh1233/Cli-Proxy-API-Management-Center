@@ -26,7 +26,7 @@ type QuotaSetter<T> = (updater: QuotaUpdater<T>) => void;
 type ViewMode = 'paged' | 'all';
 
 const MAX_ITEMS_PER_PAGE = 25;
-const MAX_SHOW_ALL_THRESHOLD = 30;
+const MAX_SHOW_ALL_THRESHOLD = 3000;
 
 interface QuotaPaginationState<T> {
   pageSize: number;

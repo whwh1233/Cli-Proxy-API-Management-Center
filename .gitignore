@@ -19,7 +19,7 @@ node_modules
 dist
 dist-ssr
 *.local
-skills
+/skills
 
 # Editor directories and files
 settings.local.json

@@ -18,7 +18,8 @@ import type { AvailabilityTone, QuotaStatusState } from './QuotaCard';
 import { useQuotaLoader } from './useQuotaLoader';
 import type { QuotaConfig } from './quotaConfigs';
 import { useGridColumns } from './useGridColumns';
-import { IconRefreshCw } from '@/components/ui/icons';
+import { WeeklyQuotaChart } from './WeeklyQuotaChart';
+import { IconRefreshCw, IconChevronUp, IconChevronDown } from '@/components/ui/icons';
 import styles from '@/pages/QuotaPage.module.scss';
 
 type QuotaUpdater<T> = T | ((prev: T) => T);
@@ -27,6 +28,7 @@ type QuotaSetter<T> = (updater: QuotaUpdater<T>) => void;
 
 type ViewMode = 'paged' | 'all';
 type StatusFilter = 'all' | 'unavailable' | 'weeklyLow';
+type SortMode = 'default' | 'weeklyAsc' | 'weeklyDesc';
 
 const MAX_ITEMS_PER_PAGE = 25;
 const MAX_SHOW_ALL_THRESHOLD = 3000;
@@ -127,6 +129,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [showTooManyWarning, setShowTooManyWarning] = useState(false);
   const [bulkAction, setBulkAction] = useState<'disable' | 'delete' | null>(null);
+  const [sortMode, setSortMode] = useState<SortMode>('default');
 
   const baseFiles = useMemo(() => files.filter((file) => config.filterFn(file)), [
     files,
@@ -240,7 +243,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
     () => unavailableFiles.filter((file) => file.disabled !== true),
     [unavailableFiles]
   );
-  const visibleFiles = useMemo(
+  const filteredFiles = useMemo(
     () =>
       statusFilter === 'unavailable'
         ? unavailableFiles
@@ -249,6 +252,16 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
           : baseFiles,
     [baseFiles, statusFilter, unavailableFiles, weeklyLowFiles]
   );
+  const visibleFiles = useMemo(() => {
+    if (sortMode === 'default') return filteredFiles;
+    return [...filteredFiles].sort((a, b) => {
+      const aPercent = getWeeklyRemainingPercent(quota[a.name]);
+      const bPercent = getWeeklyRemainingPercent(quota[b.name]);
+      const aVal = aPercent ?? -1;
+      const bVal = bPercent ?? -1;
+      return sortMode === 'weeklyAsc' ? aVal - bVal : bVal - aVal;
+    });
+  }, [filteredFiles, sortMode, getWeeklyRemainingPercent, quota]);
   const weeklyLowRatio = useMemo(() => {
     if (baseFiles.length === 0) return 0;
     return Math.round((weeklyLowFiles.length / baseFiles.length) * 100);
@@ -528,6 +541,40 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
               variant="secondary"
               size="sm"
               className={`${styles.viewModeButton} ${
+                sortMode === 'default' ? styles.viewModeButtonActive : ''
+              }`}
+              onClick={() => setSortMode('default')}
+            >
+              {t('quota_management.sort_default', { defaultValue: '默认' })}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              className={`${styles.viewModeButton} ${
+                sortMode === 'weeklyAsc' ? styles.viewModeButtonActive : ''
+              }`}
+              onClick={() => setSortMode('weeklyAsc')}
+            >
+              {t('quota_management.sort_weekly_asc', { defaultValue: '周限额' })}
+              <IconChevronUp size={14} />
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              className={`${styles.viewModeButton} ${
+                sortMode === 'weeklyDesc' ? styles.viewModeButtonActive : ''
+              }`}
+              onClick={() => setSortMode('weeklyDesc')}
+            >
+              {t('quota_management.sort_weekly_desc', { defaultValue: '周限额' })}
+              <IconChevronDown size={14} />
+            </Button>
+          </div>
+          <div className={styles.viewModeToggle}>
+            <Button
+              variant="secondary"
+              size="sm"
+              className={`${styles.viewModeButton} ${
                 effectiveViewMode === 'paged' ? styles.viewModeButtonActive : ''
               }`}
               onClick={() => setViewMode('paged')}
@@ -622,6 +669,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
         />
       ) : (
         <>
+          <WeeklyQuotaChart quota={quota} fileNames={baseFiles.map((f) => f.name)} />
           <div ref={gridRef} className={config.gridClassName}>
             {pageItems.map((item) => (
               <QuotaCard

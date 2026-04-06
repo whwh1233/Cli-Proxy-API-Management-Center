@@ -1,22 +1,14 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { useNotificationStore, useThemeStore } from '@/stores';
-import { oauthApi, type OAuthProvider, type IFlowCookieAuthResponse } from '@/services/api/oauth';
-import { vertexApi, type VertexImportResponse } from '@/services/api/vertex';
+import { oauthApi, type OAuthProvider } from '@/services/api/oauth';
+// vertex API removed — only Codex OAuth remains
 import { copyToClipboard } from '@/utils/clipboard';
 import styles from './OAuthPage.module.scss';
 import iconCodex from '@/assets/icons/codex.svg';
-import iconClaude from '@/assets/icons/claude.svg';
-import iconAntigravity from '@/assets/icons/antigravity.svg';
-import iconGemini from '@/assets/icons/gemini.svg';
-import iconKimiLight from '@/assets/icons/kimi-light.svg';
-import iconKimiDark from '@/assets/icons/kimi-dark.svg';
-import iconQwen from '@/assets/icons/qwen.svg';
-import iconIflow from '@/assets/icons/iflow.svg';
-import iconVertex from '@/assets/icons/vertex.svg';
 
 interface ProviderState {
   url?: string;
@@ -32,43 +24,17 @@ interface ProviderState {
   callbackError?: string;
 }
 
-interface IFlowCookieState {
-  cookie: string;
-  loading: boolean;
-  result?: IFlowCookieAuthResponse;
-  error?: string;
-  errorType?: 'error' | 'warning';
-}
-
-interface VertexImportResult {
-  projectId?: string;
-  email?: string;
-  location?: string;
-  authFile?: string;
-}
-
-interface VertexImportState {
-  file?: File;
-  fileName: string;
-  location: string;
-  loading: boolean;
-  error?: string;
-  result?: VertexImportResult;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object';
+function getErrorStatus(error: unknown): number | undefined {
+  if (error !== null && typeof error === 'object' && 'status' in error && typeof (error as Record<string, unknown>).status === 'number')
+    return (error as Record<string, number>).status;
+  return undefined;
 }
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
-  if (isRecord(error) && typeof error.message === 'string') return error.message;
+  if (error !== null && typeof error === 'object' && 'message' in error && typeof (error as Record<string, unknown>).message === 'string')
+    return (error as Record<string, string>).message;
   return typeof error === 'string' ? error : '';
-}
-
-function getErrorStatus(error: unknown): number | undefined {
-  if (!isRecord(error)) return undefined;
-  return typeof error.status === 'number' ? error.status : undefined;
 }
 
 const PROVIDERS: { id: OAuthProvider; titleKey: string; hintKey: string; urlLabelKey: string; icon: string | { light: string; dark: string } }[] = [
@@ -89,14 +55,7 @@ export function OAuthPage() {
   const { showNotification } = useNotificationStore();
   const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
   const [states, setStates] = useState<Record<OAuthProvider, ProviderState>>({} as Record<OAuthProvider, ProviderState>);
-  const [iflowCookie, setIflowCookie] = useState<IFlowCookieState>({ cookie: '', loading: false });
-  const [vertexState, setVertexState] = useState<VertexImportState>({
-    fileName: '',
-    location: '',
-    loading: false
-  });
   const timers = useRef<Record<string, number>>({});
-  const vertexFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const clearTimers = useCallback(() => {
     Object.values(timers.current).forEach((timer) => window.clearInterval(timer));
@@ -227,107 +186,6 @@ export function OAuthPage() {
         ? `${t('auth_login.oauth_callback_error')} ${errorMessage}`
         : t('auth_login.oauth_callback_error');
       showNotification(notificationMessage, 'error');
-    }
-  };
-
-  const submitIflowCookie = async () => {
-    const cookie = iflowCookie.cookie.trim();
-    if (!cookie) {
-      showNotification(t('auth_login.iflow_cookie_required'), 'warning');
-      return;
-    }
-    setIflowCookie((prev) => ({
-      ...prev,
-      loading: true,
-      error: undefined,
-      errorType: undefined,
-      result: undefined
-    }));
-    try {
-      const res = await oauthApi.iflowCookieAuth(cookie);
-      if (res.status === 'ok') {
-        setIflowCookie((prev) => ({ ...prev, loading: false, result: res }));
-        showNotification(t('auth_login.iflow_cookie_status_success'), 'success');
-      } else {
-        setIflowCookie((prev) => ({
-          ...prev,
-          loading: false,
-          error: res.error,
-          errorType: 'error'
-        }));
-        showNotification(`${t('auth_login.iflow_cookie_status_error')} ${res.error || ''}`, 'error');
-      }
-    } catch (err: unknown) {
-      if (getErrorStatus(err) === 409) {
-        const message = t('auth_login.iflow_cookie_config_duplicate');
-        setIflowCookie((prev) => ({ ...prev, loading: false, error: message, errorType: 'warning' }));
-        showNotification(message, 'warning');
-        return;
-      }
-      const message = getErrorMessage(err);
-      setIflowCookie((prev) => ({ ...prev, loading: false, error: message, errorType: 'error' }));
-      showNotification(
-        `${t('auth_login.iflow_cookie_start_error')}${message ? ` ${message}` : ''}`,
-        'error'
-      );
-    }
-  };
-
-  const handleVertexFilePick = () => {
-    vertexFileInputRef.current?.click();
-  };
-
-  const handleVertexFileChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    if (!file.name.endsWith('.json')) {
-      showNotification(t('vertex_import.file_required'), 'warning');
-      event.target.value = '';
-      return;
-    }
-    setVertexState((prev) => ({
-      ...prev,
-      file,
-      fileName: file.name,
-      error: undefined,
-      result: undefined
-    }));
-    event.target.value = '';
-  };
-
-  const handleVertexImport = async () => {
-    if (!vertexState.file) {
-      const message = t('vertex_import.file_required');
-      setVertexState((prev) => ({ ...prev, error: message }));
-      showNotification(message, 'warning');
-      return;
-    }
-    const location = vertexState.location.trim();
-    setVertexState((prev) => ({ ...prev, loading: true, error: undefined, result: undefined }));
-    try {
-      const res: VertexImportResponse = await vertexApi.importCredential(
-        vertexState.file,
-        location || undefined
-      );
-      const result: VertexImportResult = {
-        projectId: res.project_id,
-        email: res.email,
-        location: res.location,
-        authFile: res['auth-file'] ?? res.auth_file
-      };
-      setVertexState((prev) => ({ ...prev, loading: false, result }));
-      showNotification(t('vertex_import.success'), 'success');
-    } catch (err: unknown) {
-      const message = getErrorMessage(err);
-      setVertexState((prev) => ({
-        ...prev,
-        loading: false,
-        error: message || t('notification.upload_failed')
-      }));
-      const notification = message
-        ? `${t('notification.upload_failed')}: ${message}`
-        : t('notification.upload_failed');
-      showNotification(notification, 'error');
     }
   };
 

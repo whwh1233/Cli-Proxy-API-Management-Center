@@ -656,6 +656,39 @@
   min-height: 28px;
 }
 
+.cardDeleteButton {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-tertiary, #999);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+
+  .fileCard:hover & {
+    opacity: 1;
+  }
+
+  &:hover {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.3;
+  }
+}
+
 .cardMeta {
   display: flex;
   flex-wrap: wrap;

@@ -68,6 +68,8 @@ interface QuotaCardProps<TState extends QuotaStatusState> {
   defaultType: string;
   canRefresh?: boolean;
   onRefresh?: () => void;
+  onDelete?: () => void;
+  deleteDisabled?: boolean;
   availabilityLabel?: string;
   availabilityReason?: string | null;
   availabilityTone?: AvailabilityTone;
@@ -84,6 +86,8 @@ export function QuotaCard<TState extends QuotaStatusState>({
   defaultType,
   canRefresh = false,
   onRefresh,
+  onDelete,
+  deleteDisabled = false,
   availabilityLabel,
   availabilityReason,
   availabilityTone = 'idle',
@@ -133,6 +137,18 @@ export function QuotaCard<TState extends QuotaStatusState>({
           {getTypeLabel(displayType)}
         </span>
         <span className={styles.fileName}>{item.name}</span>
+        {onDelete && (
+          <button
+            type="button"
+            className={styles.cardDeleteButton}
+            onClick={onDelete}
+            disabled={deleteDisabled}
+            title={t('common.delete')}
+            aria-label={t('common.delete')}
+          >
+            ×
+          </button>
+        )}
       </div>
       {availabilityLabel ? (
         <div className={styles.cardMeta}>

@@ -128,7 +128,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   const [viewMode, setViewMode] = useState<ViewMode>('paged');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [showTooManyWarning, setShowTooManyWarning] = useState(false);
-  const [bulkAction, setBulkAction] = useState<'disable' | 'delete' | null>(null);
+  const [bulkAction, setBulkAction] = useState<'disable' | 'delete' | 'delete401' | null>(null);
   const [sortMode, setSortMode] = useState<SortMode>('default');
 
   const baseFiles = useMemo(() => files.filter((file) => config.filterFn(file)), [
@@ -243,6 +243,32 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
     () => unavailableFiles.filter((file) => file.disabled !== true),
     [unavailableFiles]
   );
+  const classifyError = useCallback(
+    (file: AuthFileItem): 'auth401' | 'broken' | 'usageLimit' | 'other' => {
+      const entry = quota[file.name];
+      const statusMessage = getAuthFileStatusMessage(file);
+      const errorText = entry?.error ?? '';
+      const combined = `${statusMessage} ${errorText}`;
+
+      if (entry?.errorStatus === 401) return 'auth401';
+      if (combined.includes('Unsupported parameter')) return 'broken';
+      if (combined.includes('usage_limit_reached')) return 'usageLimit';
+      return 'other';
+    },
+    [quota]
+  );
+  const { auth401Files, brokenFiles, usageLimitFiles } = useMemo(() => {
+    const auth401: AuthFileItem[] = [];
+    const broken: AuthFileItem[] = [];
+    const usageLimit: AuthFileItem[] = [];
+    for (const file of unavailableFiles) {
+      const kind = classifyError(file);
+      if (kind === 'auth401') auth401.push(file);
+      else if (kind === 'broken') broken.push(file);
+      else if (kind === 'usageLimit') usageLimit.push(file);
+    }
+    return { auth401Files: auth401, brokenFiles: broken, usageLimitFiles: usageLimit };
+  }, [unavailableFiles, classifyError]);
   const filteredFiles = useMemo(
     () =>
       statusFilter === 'unavailable'
@@ -381,6 +407,50 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
     [config, disabled, quota, setQuota, showNotification, t]
   );
 
+  const [deletingFile, setDeletingFile] = useState<string | null>(null);
+
+  const handleDeleteFile = useCallback(
+    (file: AuthFileItem) => {
+      if (disabled || deletingFile) return;
+
+      showConfirmation({
+        title: t('common.delete'),
+        message: t('quota_management.delete_single_message', {
+          defaultValue: '确认删除 {{name}} ？',
+          name: file.name
+        }),
+        confirmText: t('quota_management.bulk_delete_confirm', { defaultValue: '确认删除' }),
+        cancelText: t('common.cancel'),
+        variant: 'danger',
+        onConfirm: async () => {
+          setDeletingFile(file.name);
+          try {
+            await authFilesApi.deleteFiles([file.name]);
+            await triggerHeaderRefresh();
+            showNotification(
+              t('quota_management.delete_single_success', {
+                defaultValue: '已删除 {{name}}',
+                name: file.name
+              }),
+              'success'
+            );
+          } catch {
+            showNotification(
+              t('quota_management.delete_single_failed', {
+                defaultValue: '删除 {{name}} 失败',
+                name: file.name
+              }),
+              'error'
+            );
+          } finally {
+            setDeletingFile(null);
+          }
+        }
+      });
+    },
+    [deletingFile, disabled, showConfirmation, showNotification, t]
+  );
+
   const handleBulkDisable = useCallback(() => {
     if (disabled || disableTargets.length === 0 || bulkAction) return;
 
@@ -424,14 +494,14 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
     });
   }, [bulkAction, disableTargets, disabled, showConfirmation, showNotification, t]);
 
-  const handleBulkDelete = useCallback(() => {
-    if (disabled || unavailableFiles.length === 0 || bulkAction) return;
+  const handleBulkDeleteBroken = useCallback(() => {
+    if (disabled || brokenFiles.length === 0 || bulkAction) return;
 
     showConfirmation({
-      title: t('quota_management.bulk_delete_title', { defaultValue: '删除不可用账号' }),
-      message: t('quota_management.bulk_delete_message', {
-        defaultValue: '将删除 {{count}} 个不可用账号文件，是否继续？',
-        count: unavailableFiles.length
+      title: t('quota_management.bulk_delete_broken_title', { defaultValue: '删除损坏账号' }),
+      message: t('quota_management.bulk_delete_broken_message', {
+        defaultValue: '将删除 {{count}} 个损坏账号文件，是否继续？',
+        count: brokenFiles.length
       }),
       confirmText: t('quota_management.bulk_delete_confirm', { defaultValue: '确认删除' }),
       cancelText: t('common.cancel'),
@@ -439,13 +509,13 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
       onConfirm: async () => {
         setBulkAction('delete');
         try {
-          const result = await authFilesApi.deleteFiles(unavailableFiles.map((file) => file.name));
+          const result = await authFilesApi.deleteFiles(brokenFiles.map((file) => file.name));
           await triggerHeaderRefresh();
 
           showNotification(
             result.failed.length === 0
-              ? t('quota_management.bulk_delete_success', {
-                  defaultValue: '已删除 {{count}} 个不可用账号',
+              ? t('quota_management.bulk_delete_broken_success', {
+                  defaultValue: '已删除 {{count}} 个损坏账号',
                   count: result.deleted
                 })
               : t('quota_management.bulk_delete_partial', {
@@ -460,7 +530,45 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
         }
       }
     });
-  }, [bulkAction, disabled, showConfirmation, showNotification, t, unavailableFiles]);
+  }, [brokenFiles, bulkAction, disabled, showConfirmation, showNotification, t]);
+
+  const handleBulkDelete401 = useCallback(() => {
+    if (disabled || auth401Files.length === 0 || bulkAction) return;
+
+    showConfirmation({
+      title: t('quota_management.bulk_delete_401_title', { defaultValue: '删除 401 账号' }),
+      message: t('quota_management.bulk_delete_401_message', {
+        defaultValue: '将删除 {{count}} 个认证失效 (401) 的账号文件，是否继续？',
+        count: auth401Files.length
+      }),
+      confirmText: t('quota_management.bulk_delete_confirm', { defaultValue: '确认删除' }),
+      cancelText: t('common.cancel'),
+      variant: 'danger',
+      onConfirm: async () => {
+        setBulkAction('delete401');
+        try {
+          const result = await authFilesApi.deleteFiles(auth401Files.map((file) => file.name));
+          await triggerHeaderRefresh();
+
+          showNotification(
+            result.failed.length === 0
+              ? t('quota_management.bulk_delete_401_success', {
+                  defaultValue: '已删除 {{count}} 个 401 账号',
+                  count: result.deleted
+                })
+              : t('quota_management.bulk_delete_partial', {
+                  defaultValue: '已删除 {{success}} 个账号，另有 {{failed}} 个删除失败',
+                  success: result.deleted,
+                  failed: result.failed.length
+                }),
+            result.failed.length === 0 ? 'success' : 'warning'
+          );
+        } finally {
+          setBulkAction(null);
+        }
+      }
+    });
+  }, [auth401Files, bulkAction, disabled, showConfirmation, showNotification, t]);
 
   const titleNode = (
     <div className={styles.titleWrapper}>
@@ -529,10 +637,11 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
                     count: weeklyLowFiles.length,
                     ratio: weeklyLowRatio
                   })
-                : t('quota_management.bulk_summary', {
-                    defaultValue: '待删除 {{deleteCount}} 个，待禁用 {{disableCount}} 个',
-                    deleteCount: unavailableFiles.length,
-                    disableCount: disableTargets.length
+                : t('quota_management.bulk_summary_categorized', {
+                    defaultValue: '401: {{auth401}} 个，账号损坏: {{broken}} 个，额度见底: {{usageLimit}} 个',
+                    auth401: auth401Files.length,
+                    broken: brokenFiles.length,
+                    usageLimit: usageLimitFiles.length
                   })}
             </span>
           </div>
@@ -617,15 +726,30 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
             variant="danger"
             size="sm"
             className={styles.bulkActionButton}
-            onClick={handleBulkDelete}
-            disabled={disabled || unavailableFiles.length === 0 || isBulkBusy}
-            loading={bulkAction === 'delete'}
-            title={t('quota_management.bulk_delete_title', { defaultValue: '删除不可用账号' })}
-            aria-label={t('quota_management.bulk_delete_title', { defaultValue: '删除不可用账号' })}
+            onClick={handleBulkDelete401}
+            disabled={disabled || auth401Files.length === 0 || isBulkBusy}
+            loading={bulkAction === 'delete401'}
+            title={t('quota_management.bulk_delete_401_title', { defaultValue: '删除 401 账号' })}
+            aria-label={t('quota_management.bulk_delete_401_title', { defaultValue: '删除 401 账号' })}
           >
-            {t('quota_management.bulk_delete_with_count', {
-              defaultValue: '删除不可用 ({{count}})',
-              count: unavailableFiles.length
+            {t('quota_management.bulk_delete_401_with_count', {
+              defaultValue: '删除 401 ({{count}})',
+              count: auth401Files.length
+            })}
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            className={styles.bulkActionButton}
+            onClick={handleBulkDeleteBroken}
+            disabled={disabled || brokenFiles.length === 0 || isBulkBusy}
+            loading={bulkAction === 'delete'}
+            title={t('quota_management.bulk_delete_broken_title', { defaultValue: '删除损坏账号' })}
+            aria-label={t('quota_management.bulk_delete_broken_title', { defaultValue: '删除损坏账号' })}
+          >
+            {t('quota_management.bulk_delete_broken_with_count', {
+              defaultValue: '删除损坏 ({{count}})',
+              count: brokenFiles.length
             })}
           </Button>
           <Button
@@ -683,6 +807,8 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
                 defaultType={config.type}
                 canRefresh={!disabled && !item.disabled}
                 onRefresh={() => void refreshQuotaForFile(item)}
+                onDelete={() => handleDeleteFile(item)}
+                deleteDisabled={disabled || deletingFile !== null}
                 availabilityLabel={getAvailabilityState(item, quota[item.name]).label}
                 availabilityReason={getAvailabilityState(item, quota[item.name]).reason}
                 availabilityTone={getAvailabilityState(item, quota[item.name]).tone}

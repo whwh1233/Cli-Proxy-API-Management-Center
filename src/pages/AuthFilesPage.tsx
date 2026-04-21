@@ -44,6 +44,7 @@ import { AuthFileModelsModal } from '@/features/authFiles/components/AuthFileMod
 import { AuthFilesPrefixProxyEditorModal } from '@/features/authFiles/components/AuthFilesPrefixProxyEditorModal';
 import { OAuthExcludedCard } from '@/features/authFiles/components/OAuthExcludedCard';
 import { OAuthModelAliasCard } from '@/features/authFiles/components/OAuthModelAliasCard';
+import { BatchPriorityModal } from '@/features/authFiles/components/BatchPriorityModal';
 import { useAuthFilesData } from '@/features/authFiles/hooks/useAuthFilesData';
 import { useAuthFilesModels } from '@/features/authFiles/hooks/useAuthFilesModels';
 import { useAuthFilesOauth } from '@/features/authFiles/hooks/useAuthFilesOauth';
@@ -99,6 +100,7 @@ export function AuthFilesPage() {
   const [viewMode, setViewMode] = useState<'diagram' | 'list'>('list');
   const [sortMode, setSortMode] = useState<AuthFilesSortMode>('default');
   const [batchActionBarVisible, setBatchActionBarVisible] = useState(false);
+  const [batchPriorityModalOpen, setBatchPriorityModalOpen] = useState(false);
   const [uiStateHydrated, setUiStateHydrated] = useState(false);
   const floatingBatchActionsRef = useRef<HTMLDivElement>(null);
   const batchActionAnimationRef = useRef<AnimationPlaybackControlsWithThen | null>(null);
@@ -131,7 +133,11 @@ export function AuthFilesPage() {
     deselectAll,
     batchDownload,
     batchSetStatus,
+    batchSetPriority,
+    batchPriorityUpdating,
     batchDelete,
+    exporting,
+    exportAvailable,
   } = useAuthFilesData({ refreshKeyStats });
 
   const statusBarCache = useAuthFilesStatusBarCache(files, usageDetails);
@@ -665,6 +671,15 @@ export function AuthFilesPage() {
               {t('auth_files.upload_button')}
             </Button>
             <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void exportAvailable()}
+              disabled={disableControls || loading || exporting}
+              loading={exporting}
+            >
+              {t('auth_files.export_available_button')}
+            </Button>
+            <Button
               variant="danger"
               size="sm"
               onClick={() =>
@@ -889,6 +904,17 @@ export function AuthFilesPage() {
         onChange={handlePrefixProxyChange}
       />
 
+      <BatchPriorityModal
+        open={batchPriorityModalOpen}
+        count={selectedNames.length}
+        loading={batchPriorityUpdating}
+        onConfirm={async (priority) => {
+          await batchSetPriority(selectedNames, priority);
+          setBatchPriorityModalOpen(false);
+        }}
+        onClose={() => setBatchPriorityModalOpen(false)}
+      />
+
       {batchActionBarVisible && typeof document !== 'undefined'
         ? createPortal(
             <div className={styles.batchActionContainer} ref={floatingBatchActionsRef}>
@@ -948,6 +974,14 @@ export function AuthFilesPage() {
                     disabled={batchStatusButtonsDisabled}
                   >
                     {t('auth_files.batch_disable')}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setBatchPriorityModalOpen(true)}
+                    disabled={disableControls || selectedNames.length === 0 || batchPriorityUpdating}
+                  >
+                    {t('auth_files.batch_priority_button')}
                   </Button>
                   <Button
                     variant="danger"

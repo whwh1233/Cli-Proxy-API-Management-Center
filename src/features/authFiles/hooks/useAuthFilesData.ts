@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
+import JSZip from 'jszip';
 import { authFilesApi } from '@/services/api';
 import { apiClient } from '@/services/api/client';
 import { useNotificationStore } from '@/stores';
@@ -45,7 +46,11 @@ export type UseAuthFilesDataResult = {
   deselectAll: () => void;
   batchDownload: (names: string[]) => Promise<void>;
   batchSetStatus: (names: string[], enabled: boolean) => Promise<void>;
+  batchSetPriority: (names: string[], priority: number) => Promise<void>;
+  batchPriorityUpdating: boolean;
   batchDelete: (names: string[]) => void;
+  exporting: boolean;
+  exportAvailable: () => Promise<void>;
 };
 
 export type UseAuthFilesDataOptions = {
@@ -65,6 +70,8 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
   const [deletingAll, setDeletingAll] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState<Record<string, boolean>>({});
   const [batchStatusUpdating, setBatchStatusUpdating] = useState(false);
+  const [batchPriorityUpdating, setBatchPriorityUpdating] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -564,6 +571,57 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
     [showNotification, t]
   );
 
+  const batchSetPriority = useCallback(
+    async (names: string[], priority: number) => {
+      const uniqueNames = Array.from(new Set(names));
+      if (uniqueNames.length === 0) return;
+
+      setBatchPriorityUpdating(true);
+
+      try {
+        const results = await Promise.allSettled(
+          uniqueNames.map(async (name) => {
+            const json = await authFilesApi.downloadJsonObject(name);
+            json.priority = priority;
+            await authFilesApi.saveJsonObject(name, json);
+          })
+        );
+
+        let successCount = 0;
+        let failCount = 0;
+        results.forEach((result) => {
+          if (result.status === 'fulfilled') {
+            successCount++;
+          } else {
+            failCount++;
+          }
+        });
+
+        if (successCount > 0) {
+          await loadFiles();
+          await refreshKeyStats();
+        }
+
+        if (failCount === 0) {
+          showNotification(
+            t('auth_files.batch_priority_success', { count: successCount }),
+            'success'
+          );
+        } else {
+          showNotification(
+            t('auth_files.batch_priority_partial', { success: successCount, failed: failCount }),
+            'warning'
+          );
+        }
+
+        deselectAll();
+      } finally {
+        setBatchPriorityUpdating(false);
+      }
+    },
+    [deselectAll, loadFiles, refreshKeyStats, showNotification, t]
+  );
+
   const batchDelete = useCallback(
     (names: string[]) => {
       const uniqueNames = Array.from(new Set(names));
@@ -604,6 +662,72 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
     [applyDeletedFiles, showConfirmation, showNotification, t]
   );
 
+  const exportAvailable = useCallback(async () => {
+    if (exporting) return;
+
+    const available = files.filter(
+      (file) =>
+        file.disabled !== true &&
+        !hasAuthFileStatusMessage(file) &&
+        !isRuntimeOnlyAuthFile(file)
+    );
+
+    if (available.length === 0) {
+      showNotification(t('auth_files.export_empty'), 'info');
+      return;
+    }
+
+    setExporting(true);
+    try {
+      const results = await Promise.allSettled(
+        available.map(async (file) => ({
+          name: file.name,
+          text: await authFilesApi.downloadText(file.name),
+        }))
+      );
+
+      const zip = new JSZip();
+      let successCount = 0;
+      let failCount = 0;
+      results.forEach((result) => {
+        if (result.status === 'fulfilled') {
+          zip.file(result.value.name, result.value.text);
+          successCount++;
+        } else {
+          failCount++;
+        }
+      });
+
+      if (successCount === 0) {
+        showNotification(t('auth_files.export_failed'), 'error');
+        return;
+      }
+
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+      downloadBlob({ filename: `auth-files-export-${stamp}.zip`, blob });
+
+      if (failCount === 0) {
+        showNotification(
+          t('auth_files.export_success', { count: successCount }),
+          'success'
+        );
+      } else {
+        showNotification(
+          t('auth_files.export_partial', { success: successCount, failed: failCount }),
+          'warning'
+        );
+      }
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : '';
+      showNotification(`${t('auth_files.export_failed')}: ${errorMessage}`, 'error');
+    } finally {
+      setExporting(false);
+    }
+  }, [exporting, files, showNotification, t]);
+
   return {
     files,
     selectedFiles,
@@ -629,6 +753,10 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
     deselectAll,
     batchDownload,
     batchSetStatus,
+    batchSetPriority,
+    batchPriorityUpdating,
     batchDelete,
+    exporting,
+    exportAvailable,
   };
 }
